@@ -17,6 +17,13 @@ cp -r "$METEOR_PROJECT_DIR/client" "$VITE_PROJECT_DIR/src"
 cp -r "$METEOR_PROJECT_DIR/public" "$VITE_PROJECT_DIR/public"
 cp -r "$METEOR_PROJECT_DIR/imports" "$VITE_PROJECT_DIR/src/imports"
 
+# Detect if the project uses TypeScript or JavaScript
+if find "$METEOR_PROJECT_DIR" -name "*.ts" -o -name "*.tsx" | grep -q '.'; then
+    USE_TYPESCRIPT=true
+else
+    USE_TYPESCRIPT=false
+fi
+
 # Create package.json for Vite project
 cat > "$VITE_PROJECT_DIR/package.json" <<EOL
 {
@@ -36,17 +43,55 @@ cat > "$VITE_PROJECT_DIR/package.json" <<EOL
   "devDependencies": {
     "@vitejs/plugin-react": "^4.0.0",
     "vite": "^4.3.9"
+EOL
+
+if [ "$USE_TYPESCRIPT" = true ]; then
+    cat >> "$VITE_PROJECT_DIR/package.json" <<EOL
+    ,
+    "typescript": "^5.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0"
+EOL
+fi
+
+cat >> "$VITE_PROJECT_DIR/package.json" <<EOL
   }
 }
 EOL
 
-# Create vite.config.js
-cat > "$VITE_PROJECT_DIR/vite.config.js" <<EOL
+# Create vite.config.js or vite.config.ts
+if [ "$USE_TYPESCRIPT" = true ]; then
+    CONFIG_FILE="vite.config.ts"
+else
+    CONFIG_FILE="vite.config.js"
+fi
+
+cat > "$VITE_PROJECT_DIR/$CONFIG_FILE" <<EOL
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+EOL
+
+if [ "$USE_TYPESCRIPT" = true ]; then
+    cat >> "$VITE_PROJECT_DIR/$CONFIG_FILE" <<EOL
+  esbuild: {
+    loader: "tsx",
+    include: /src\/.*\.[tj]sx?$/,
+    exclude: [],
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      loader: {
+        '.ts': 'tsx',
+        '.js': 'jsx',
+      },
+    },
+  },
+EOL
+else
+    cat >> "$VITE_PROJECT_DIR/$CONFIG_FILE" <<EOL
   esbuild: {
     loader: "jsx",
     include: /src\/.*\.jsx?$/,
@@ -59,6 +104,10 @@ export default defineConfig({
       },
     },
   },
+EOL
+fi
+
+cat >> "$VITE_PROJECT_DIR/$CONFIG_FILE" <<EOL
 })
 EOL
 
@@ -73,13 +122,31 @@ cat > "$VITE_PROJECT_DIR/index.html" <<EOL
   </head>
   <body>
     <div id="root"></div>
+EOL
+
+if [ "$USE_TYPESCRIPT" = true ]; then
+    cat >> "$VITE_PROJECT_DIR/index.html" <<EOL
+    <script type="module" src="/src/main.tsx"></script>
+EOL
+else
+    cat >> "$VITE_PROJECT_DIR/index.html" <<EOL
     <script type="module" src="/src/main.jsx"></script>
+EOL
+fi
+
+cat >> "$VITE_PROJECT_DIR/index.html" <<EOL
   </body>
 </html>
 EOL
 
-# Create main.jsx
-cat > "$VITE_PROJECT_DIR/src/main.jsx" <<EOL
+# Create main.tsx or main.jsx
+if [ "$USE_TYPESCRIPT" = true ]; then
+    MAIN_FILE="main.tsx"
+else
+    MAIN_FILE="main.jsx"
+fi
+
+cat > "$VITE_PROJECT_DIR/src/$MAIN_FILE" <<EOL
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./imports/ui/App";
@@ -118,11 +185,19 @@ while IFS= read -r -d '' file; do
     # Extract non-Meteor packages
     PACKAGES+=($(extract_packages "$file"))
     
-    # Rename .js to .jsx if file contains JSX and is not already .jsx
-    if [[ "$file" == *.js ]] && grep -q "React.createElement\|jsx\|<[A-Z]" "$file"; then
-        mv "$file" "${file%.js}.jsx"
+    # Rename .js to .jsx or .ts to .tsx if file contains JSX and is not already .jsx/.tsx
+    if grep -q "React.createElement\|jsx\|<[A-Z]" "$file"; then
+        if [ "$USE_TYPESCRIPT" = true ]; then
+            if [[ "$file" == *.ts ]] && [[ ! "$file" == *.tsx ]]; then
+                mv "$file" "${file%.ts}.tsx"
+            fi
+        else
+            if [[ "$file" == *.js ]] && [[ ! "$file" == *.jsx ]]; then
+                mv "$file" "${file%.js}.jsx"
+            fi
+        fi
     fi
-done < <(find "$VITE_PROJECT_DIR/src" -type f \( -name "*.js" -o -name "*.jsx" \) -print0)
+done < <(find "$VITE_PROJECT_DIR/src" -type f \( -name "*.js" -o -name "*.jsx" -o -name "*.ts" -o -name "*.tsx" \) -print0)
 
 # Remove duplicates
 UNIQUE_PACKAGES=($(echo "${PACKAGES[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
